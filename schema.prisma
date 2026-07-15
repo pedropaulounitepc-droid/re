@@ -199,7 +199,6 @@ model Questao {
   @@index([instituicao])
   @@index([ano])
   @@index([dificuldade])
-  @@fulltext([enunciado]) // busca por palavra-chave
 }
 
 model RespostaQuestao {
