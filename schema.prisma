@@ -1,0 +1,549 @@
+// =========================================================
+// Revalida Live — Schema do Banco de Dados
+// PostgreSQL (Supabase) + Prisma ORM
+// =========================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------
+
+enum Role {
+  ALUNO
+  PROFESSOR
+  ADMIN
+}
+
+enum Instituicao {
+  REVALIDA_INEP
+  ENARE
+  PROPRIA
+}
+
+enum Dificuldade {
+  FACIL
+  MEDIA
+  DIFICIL
+}
+
+enum TipoSimulado {
+  REVALIDA
+  ENARE
+  PERSONALIZADO
+}
+
+enum StatusAssinatura {
+  ATIVA
+  CANCELADA
+  ATRASADA
+  EXPIRADA
+  TRIAL
+}
+
+enum PeriodoPlano {
+  MENSAL
+  TRIMESTRAL
+  ANUAL
+}
+
+enum MetodoPagamento {
+  PIX
+  CARTAO
+  STRIPE
+  MERCADO_PAGO
+}
+
+enum TipoNotificacao {
+  SISTEMA
+  NOVA_AULA
+  NOVO_SIMULADO
+  LEMBRETE_ESTUDO
+  PAGAMENTO
+}
+
+// ---------------------------------------------------------
+// USUÁRIOS
+// ---------------------------------------------------------
+
+model User {
+  id              String   @id @default(uuid())
+  supabaseAuthId  String   @unique // vínculo com Supabase Auth
+  nome            String
+  email           String   @unique
+  avatarUrl       String?
+  role            Role     @default(ALUNO)
+  ativo           Boolean  @default(true)
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  // Relacionamentos - Aluno
+  respostas          RespostaQuestao[]
+  favoritos          QuestaoFavorita[]
+  revisoes           QuestaoRevisao[]
+  tentativasSimulado TentativaSimulado[]
+  progressoVideo     ProgressoVideoaula[]
+  flashcardReview    FlashcardRevisao[]
+  planoEstudo        PlanoEstudo?
+  assinatura         Assinatura?
+  gamificacao        Gamificacao?
+  notificacoes       Notificacao[]
+  conversasIA        ConversaIA[]
+
+  // Relacionamentos - Professor
+  videoaulasCriadas Videoaula[] @relation("ProfessorVideoaulas")
+  questoesCriadas   Questao[]   @relation("AutorQuestao")
+
+  @@map("users")
+  @@index([email])
+  @@index([role])
+}
+
+// ---------------------------------------------------------
+// BANCO DE QUESTÕES
+// ---------------------------------------------------------
+
+model Especialidade {
+  id     String  @id @default(uuid())
+  nome   String  @unique
+  slug   String  @unique
+  temas  Tema[]
+  questoes Questao[]
+
+  @@map("especialidades")
+}
+
+model Tema {
+  id              String        @id @default(uuid())
+  nome            String
+  especialidadeId String
+  especialidade   Especialidade @relation(fields: [especialidadeId], references: [id])
+  subtemas        Subtema[]
+  questoes        Questao[]
+
+  @@map("temas")
+  @@index([especialidadeId])
+}
+
+model Subtema {
+  id       String    @id @default(uuid())
+  nome     String
+  temaId   String
+  tema     Tema      @relation(fields: [temaId], references: [id])
+  questoes Questao[]
+
+  @@map("subtemas")
+  @@index([temaId])
+}
+
+model Prova {
+  id           String      @id @default(uuid())
+  nome         String      // ex: "Revalida 2024.1"
+  instituicao  Instituicao
+  ano          Int
+  autorizada   Boolean     @default(false) // controle de direitos de uso
+  questoes     Questao[]
+
+  @@map("provas")
+  @@unique([instituicao, ano, nome])
+}
+
+model Questao {
+  id              String        @id @default(uuid())
+  enunciado       String        @db.Text
+  imagens         String[]      // URLs no Supabase Storage
+  alternativaA    String        @db.Text
+  alternativaB    String        @db.Text
+  alternativaC    String        @db.Text
+  alternativaD    String        @db.Text
+  alternativaE    String        @db.Text
+  respostaCorreta String        // "A" | "B" | "C" | "D" | "E"
+  comentario      String        @db.Text
+  referencias     String?       @db.Text
+
+  especialidadeId String
+  especialidade   Especialidade @relation(fields: [especialidadeId], references: [id])
+  temaId          String?
+  tema            Tema?         @relation(fields: [temaId], references: [id])
+  subtemaId       String?
+  subtema         Subtema?      @relation(fields: [subtemaId], references: [id])
+
+  dificuldade     Dificuldade   @default(MEDIA)
+  ano             Int?
+  instituicao     Instituicao
+  provaId         String?
+  prova           Prova?        @relation(fields: [provaId], references: [id])
+
+  autorId         String?
+  autor           User?         @relation("AutorQuestao", fields: [autorId], references: [id])
+
+  ativo           Boolean       @default(true)
+  criadoEm        DateTime      @default(now())
+  atualizadoEm    DateTime      @updatedAt
+
+  respostas       RespostaQuestao[]
+  favoritos       QuestaoFavorita[]
+  revisoes        QuestaoRevisao[]
+  itensSimulado   ItemSimulado[]
+  flashcards      Flashcard[]
+
+  @@map("questoes")
+  @@index([especialidadeId])
+  @@index([instituicao])
+  @@index([ano])
+  @@index([dificuldade])
+  @@fulltext([enunciado]) // busca por palavra-chave
+}
+
+model RespostaQuestao {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  questaoId    String
+  questao      Questao  @relation(fields: [questaoId], references: [id])
+  alternativa  String   // resposta escolhida
+  correta      Boolean
+  tempoSegundos Int?
+  respondidoEm DateTime @default(now())
+
+  @@map("respostas_questao")
+  @@index([userId])
+  @@index([questaoId])
+}
+
+model QuestaoFavorita {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  questaoId String
+  questao   Questao  @relation(fields: [questaoId], references: [id])
+  criadoEm  DateTime @default(now())
+
+  @@map("questoes_favoritas")
+  @@unique([userId, questaoId])
+}
+
+model QuestaoRevisao {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  questaoId String
+  questao   Questao  @relation(fields: [questaoId], references: [id])
+  criadoEm  DateTime @default(now())
+
+  @@map("questoes_revisao")
+  @@unique([userId, questaoId])
+}
+
+// ---------------------------------------------------------
+// SIMULADOS
+// ---------------------------------------------------------
+
+model Simulado {
+  id            String         @id @default(uuid())
+  titulo        String
+  tipo          TipoSimulado
+  duracaoMin    Int
+  ativo         Boolean        @default(true)
+  criadoEm      DateTime       @default(now())
+  itens         ItemSimulado[]
+  tentativas    TentativaSimulado[]
+
+  @@map("simulados")
+}
+
+model ItemSimulado {
+  id         String   @id @default(uuid())
+  simuladoId String
+  simulado   Simulado @relation(fields: [simuladoId], references: [id])
+  questaoId  String
+  questao    Questao  @relation(fields: [questaoId], references: [id])
+  ordem      Int
+
+  @@map("itens_simulado")
+  @@unique([simuladoId, questaoId])
+}
+
+model TentativaSimulado {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  simuladoId     String
+  simulado       Simulado  @relation(fields: [simuladoId], references: [id])
+  acertos        Int
+  totalQuestoes  Int
+  percentual     Float
+  tempoSegundos  Int
+  iniciadoEm     DateTime  @default(now())
+  finalizadoEm   DateTime?
+  respostasJson  Json      // snapshot das respostas dadas
+
+  @@map("tentativas_simulado")
+  @@index([userId])
+  @@index([simuladoId])
+}
+
+// ---------------------------------------------------------
+// VIDEOAULAS
+// ---------------------------------------------------------
+
+model Videoaula {
+  id              String        @id @default(uuid())
+  titulo          String
+  descricao       String        @db.Text
+  videoUrl        String
+  pdfUrl          String?
+  especialidadeId String
+  duracaoMin      Int
+  professorId     String?
+  professor       User?         @relation("ProfessorVideoaulas", fields: [professorId], references: [id])
+  criadoEm        DateTime      @default(now())
+
+  progresso       ProgressoVideoaula[]
+
+  @@map("videoaulas")
+  @@index([especialidadeId])
+}
+
+model ProgressoVideoaula {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  videoaulaId   String
+  videoaula     Videoaula @relation(fields: [videoaulaId], references: [id])
+  segundosAssistidos Int  @default(0)
+  concluido     Boolean   @default(false)
+  atualizadoEm  DateTime  @updatedAt
+
+  @@map("progresso_videoaula")
+  @@unique([userId, videoaulaId])
+}
+
+// ---------------------------------------------------------
+// FLASHCARDS (repetição espaçada - algoritmo SM-2)
+// ---------------------------------------------------------
+
+model Flashcard {
+  id         String   @id @default(uuid())
+  frente     String   @db.Text
+  verso      String   @db.Text
+  questaoId  String?
+  questao    Questao? @relation(fields: [questaoId], references: [id])
+  criadoEm   DateTime @default(now())
+
+  revisoes   FlashcardRevisao[]
+
+  @@map("flashcards")
+}
+
+model FlashcardRevisao {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  flashcardId    String
+  flashcard      Flashcard @relation(fields: [flashcardId], references: [id])
+  facilidade     Float     @default(2.5) // fator SM-2
+  intervalo      Int       @default(1)   // dias até próxima revisão
+  repeticoes     Int       @default(0)
+  proximaRevisao DateTime
+  ultimaRevisao  DateTime  @default(now())
+
+  @@map("flashcard_revisoes")
+  @@unique([userId, flashcardId])
+  @@index([proximaRevisao])
+}
+
+// ---------------------------------------------------------
+// PLANO DE ESTUDOS
+// ---------------------------------------------------------
+
+model PlanoEstudo {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id])
+  dataProva    DateTime?
+  metasJson    Json     // metas semanais/mensais definidas pelo aluno ou IA
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  itens        ItemPlanoEstudo[]
+
+  @@map("planos_estudo")
+}
+
+model ItemPlanoEstudo {
+  id            String      @id @default(uuid())
+  planoId       String
+  plano         PlanoEstudo @relation(fields: [planoId], references: [id])
+  titulo        String
+  data          DateTime
+  concluido     Boolean     @default(false)
+
+  @@map("itens_plano_estudo")
+  @@index([planoId])
+}
+
+// ---------------------------------------------------------
+// ASSINATURAS E PAGAMENTOS
+// ---------------------------------------------------------
+
+model Plano {
+  id            String       @id @default(uuid())
+  nome          String       // "Mensal", "Trimestral", "Anual"
+  periodo       PeriodoPlano @unique
+  precoCentavos Int          // valor em centavos (evita float)
+  destaque      String?      // "Mais Popular" | "Melhor Oferta"
+  ativo         Boolean      @default(true)
+
+  assinaturas   Assinatura[]
+
+  @@map("planos")
+}
+
+model Assinatura {
+  id                  String            @id @default(uuid())
+  userId              String            @unique
+  user                User              @relation(fields: [userId], references: [id])
+  planoId             String
+  plano               Plano             @relation(fields: [planoId], references: [id])
+  status              StatusAssinatura  @default(TRIAL)
+  metodoPagamento     MetodoPagamento?
+  renovacaoAutomatica Boolean           @default(true)
+  stripeCustomerId    String?
+  mercadoPagoId       String?
+  cupomId             String?
+  cupom               Cupom?            @relation(fields: [cupomId], references: [id])
+  iniciadoEm          DateTime          @default(now())
+  expiraEm            DateTime?
+  canceladoEm         DateTime?
+
+  pagamentos          Pagamento[]
+
+  @@map("assinaturas")
+}
+
+model Pagamento {
+  id              String          @id @default(uuid())
+  assinaturaId    String
+  assinatura      Assinatura      @relation(fields: [assinaturaId], references: [id])
+  valorCentavos   Int
+  metodo          MetodoPagamento
+  statusExterno   String          // status retornado pelo provedor
+  transacaoId     String          @unique // id externo (Stripe/MP)
+  criadoEm        DateTime        @default(now())
+
+  @@map("pagamentos")
+  @@index([assinaturaId])
+}
+
+model Cupom {
+  id             String       @id @default(uuid())
+  codigo         String       @unique
+  percentualDesc Int?
+  valorDescCentavos Int?
+  validoAte      DateTime?
+  usosMax        Int?
+  usosAtuais     Int          @default(0)
+  ativo          Boolean      @default(true)
+
+  assinaturas    Assinatura[]
+
+  @@map("cupons")
+}
+
+// ---------------------------------------------------------
+// GAMIFICAÇÃO
+// ---------------------------------------------------------
+
+model Gamificacao {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id])
+  pontos         Int      @default(0)
+  nivel          Int      @default(1)
+  sequenciaDias  Int      @default(0)
+  ultimoEstudoEm DateTime?
+
+  conquistas     ConquistaUsuario[]
+
+  @@map("gamificacao")
+}
+
+model Conquista {
+  id          String @id @default(uuid())
+  nome        String
+  descricao   String
+  icone       String
+  criterioTipo String // ex: "QUESTOES_RESPONDIDAS", "SEQUENCIA_DIAS"
+  criterioValor Int
+
+  usuarios    ConquistaUsuario[]
+
+  @@map("conquistas")
+}
+
+model ConquistaUsuario {
+  id            String      @id @default(uuid())
+  gamificacaoId String
+  gamificacao   Gamificacao @relation(fields: [gamificacaoId], references: [id])
+  conquistaId   String
+  conquista     Conquista   @relation(fields: [conquistaId], references: [id])
+  conquistadoEm DateTime    @default(now())
+
+  @@map("conquistas_usuario")
+  @@unique([gamificacaoId, conquistaId])
+}
+
+// ---------------------------------------------------------
+// NOTIFICAÇÕES
+// ---------------------------------------------------------
+
+model Notificacao {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  tipo      TipoNotificacao
+  titulo    String
+  mensagem  String          @db.Text
+  lida      Boolean         @default(false)
+  criadoEm  DateTime        @default(now())
+
+  @@map("notificacoes")
+  @@index([userId, lida])
+}
+
+// ---------------------------------------------------------
+// REVALIDA IA
+// ---------------------------------------------------------
+
+model ConversaIA {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id])
+  titulo    String?
+  criadoEm  DateTime      @default(now())
+
+  mensagens MensagemIA[]
+
+  @@map("conversas_ia")
+  @@index([userId])
+}
+
+model MensagemIA {
+  id          String     @id @default(uuid())
+  conversaId  String
+  conversa    ConversaIA @relation(fields: [conversaId], references: [id])
+  role        String     // "user" | "assistant"
+  conteudo    String     @db.Text
+  criadoEm    DateTime   @default(now())
+
+  @@map("mensagens_ia")
+  @@index([conversaId])
+}
